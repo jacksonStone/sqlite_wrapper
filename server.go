@@ -3,8 +3,10 @@ package main
 import (
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,7 +28,105 @@ func main() {
 	// Directory containing SQL files
 	directory := "migrations"
 	migration_table := "completed_migrations"
-	initialize_migration_table_if_not_present(migration_table, db)
+	run_migrations(directory, migration_table, db)
+
+	http.HandleFunc("/exec", (func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Only GET method is allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			// return err to client
+			http.Error(w, "Error reading request body", http.StatusBadRequest)
+		}
+		// Pipe request body data to sqLite
+		db.Exec(string(query))
+	}))
+
+	http.HandleFunc("/query", (func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Only GET method is allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
+			return
+		}
+
+		if err != nil {
+			// return err to client
+			http.Error(w, "Error reading request body", http.StatusBadRequest)
+		}
+
+		rows, err := db.Query(query)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get columns: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		var results []map[string]interface{}
+
+		for rows.Next() {
+			columnsData := make([]interface{}, len(columns))
+			columnsPointers := make([]interface{}, len(columns))
+
+			for i := range columnsData {
+				columnsPointers[i] = &columnsData[i]
+			}
+
+			if err := rows.Scan(columnsPointers...); err != nil {
+				http.Error(w, fmt.Sprintf("Failed to scan row: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			rowMap := make(map[string]interface{})
+			for i, colName := range columns {
+				rowMap[colName] = columnsData[i]
+			}
+
+			results = append(results, rowMap)
+		}
+
+		if err := rows.Err(); err != nil {
+			http.Error(w, fmt.Sprintf("Rows iteration error: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}))
+	// For local development, just use http
+	log.Println("Starting server on :3333")
+	err = http.ListenAndServe(":3333", nil)
+	if err != nil {
+		log.Fatalf("ListenAndServe error: %v", err)
+	}
+}
+
+func run_migrations(directory string, migration_table string, db *sql.DB) {
+	// Create the migration table if it does not exist
+	_, err := db.Exec(fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);`, migration_table))
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Get all files in the directory
 	// Check if the directory exists
 	if _, err := os.Stat(directory); os.IsNotExist(err) {
 		log.Fatalf("Directory %s does not exist", directory)
@@ -89,18 +189,5 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Println(name)
-	}
-}
-
-func initialize_migration_table_if_not_present(migration_table string, db *sql.DB) {
-	// Create the migration table if it does not exist
-	_, err := db.Exec(fmt.Sprintf(
-		`CREATE TABLE IF NOT EXISTS %s (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);`, migration_table))
-	if err != nil {
-		log.Fatal(err)
 	}
 }
