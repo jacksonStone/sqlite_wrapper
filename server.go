@@ -14,6 +14,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type RequestBody struct {
+	Query      string          `json:"query"`
+	Parameters json.RawMessage `json:"parameters"`
+}
+
 //go:embed migrations
 var migrations embed.FS
 
@@ -30,41 +35,67 @@ func main() {
 	migration_table := "completed_migrations"
 	run_migrations(directory, migration_table, db)
 
-	http.HandleFunc("/exec", (func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Only GET method is allowed", http.StatusMethodNotAllowed)
+	http.HandleFunc("/execute", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
-			return
-		}
+
+		var data RequestBody
+		err := json.NewDecoder(r.Body).Decode(&data)
 		if err != nil {
-			// return err to client
-			http.Error(w, "Error reading request body", http.StatusBadRequest)
+			http.Error(w, "Error decoding JSON: "+err.Error(), http.StatusBadRequest)
+			return
 		}
-		// Pipe request body data to sqLite
-		db.Exec(string(query))
-	}))
+		// Define a variable to hold the unmarshaled data
+		var parameters []interface{}
+
+		// Unmarshal the JSON data
+		err = json.Unmarshal([]byte(data.Parameters), &parameters)
+		if err != nil {
+			log.Fatalf("Error unmarshaling JSON: %v", err)
+		}
+
+		if data.Query == "" {
+			http.Error(w, "Query field is required", http.StatusBadRequest)
+			return
+		}
+
+		_, err = db.Exec(data.Query, parameters...)
+		if err != nil {
+			print("Error executing query: " + err.Error())
+			http.Error(w, "Error executing query: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	})
 
 	http.HandleFunc("/query", (func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Only GET method is allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
+		if r.Method != http.MethodPost {
+			http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
+		var data RequestBody
+		err := json.NewDecoder(r.Body).Decode(&data)
 		if err != nil {
-			// return err to client
-			http.Error(w, "Error reading request body", http.StatusBadRequest)
+			http.Error(w, "Error decoding JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Define a variable to hold the unmarshaled data
+		var parameters []interface{}
+
+		// Unmarshal the JSON data
+		err = json.Unmarshal([]byte(data.Parameters), &parameters)
+		if err != nil {
+			http.Error(w, "invalid parameters provided: "+err.Error(), http.StatusBadRequest)
 		}
 
-		rows, err := db.Query(query)
+		if data.Query == "" {
+			http.Error(w, "Query field is required", http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query(data.Query, parameters...)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -105,7 +136,12 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
+		if len(results) == 0 {
+			// Prefer an empty array over null
+			json.NewEncoder(w).Encode(make([]string, 0))
+		} else {
+			json.NewEncoder(w).Encode(results)
+		}
 	}))
 	// For local development, just use http
 	log.Println("Starting server on :3333")
@@ -164,9 +200,11 @@ func run_migrations(directory string, migration_table string, db *sql.DB) {
 			_, err = db.Exec(string(sqlContent))
 			if err != nil {
 				log.Printf("Error executing %s: %v", file.Name(), err)
-			} else {
-				fmt.Printf("Executed %s successfully\n", file.Name())
+				continue
 			}
+
+			fmt.Printf("Executed %s successfully\n", file.Name())
+
 			// Persist that the migration has been executed
 			_, err = db.Exec(fmt.Sprintf("INSERT INTO %s (name) VALUES (?)", migration_table), file.Name())
 			if err != nil {

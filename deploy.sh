@@ -16,6 +16,7 @@ ssh -i /Users/jacksonstone/Desktop/Jackson\ Personal\ Site\ Key.pem ubuntu@3.19.
   GOOS=linux GOARCH=amd64 CGO_ENABLED=1 /usr/local/go/bin/go build  -o ./sqlite_wrapper ./server.go|| { echo "Go build failed"; exit 1; }
   cd ~
   mv ./.temp/sqlite_wrapper . || { echo "Failed to move the file"; exit 1; }
+  rm -rf ./migrations
   mv ./.temp/migrations . || { echo "Failed to move the file"; exit 1; }
   rm ./.temp/go.mod
   rm ./.temp/go.sum
