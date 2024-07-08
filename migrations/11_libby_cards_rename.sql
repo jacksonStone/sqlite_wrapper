@@ -1,0 +1,1 @@
+ALTER TABLE libby_cards_user RENAME COLUMN stripeLastProceedSessionId to stripeLastProcessedSessionId;
