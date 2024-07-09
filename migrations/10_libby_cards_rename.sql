@@ -1,1 +1,0 @@
-ALTER TABLE libby_cards_user RENAME COLUMN stripCustomerId TO stripeCustomerId;
