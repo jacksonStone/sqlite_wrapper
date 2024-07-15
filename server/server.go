@@ -14,19 +14,35 @@ import (
 type RequestBody struct {
 	Query      string          `json:"query"`
 	Parameters json.RawMessage `json:"parameters"`
+	Database   string          `json:"database"`
 }
 
-func main() {
-	// Open SQLite database
-	path := "./database.db"
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		path = "../migrator/database.db"
+func connectToDb(rootPath, dbName string, dbs *map[string]*sql.DB) *sql.DB {
+	path := rootPath + dbName + ".db"
+	fmt.Println("path: " + path)
+	if _, exists := (*dbs)[path]; exists {
+		return (*dbs)[path]
 	}
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	(*dbs)[path] = db
+	return db
+}
+func main() {
+	// Open SQLite database
+	rootPath := "./"
+	defaultDb := "database"
+	if _, err := os.Stat(rootPath + defaultDb + ".db"); os.IsNotExist(err) {
+		rootPath = "../migrator/"
+	}
+	// Create a map of different dbs to paths
+
+	dbs := make(map[string]*sql.DB)
+	connectToDb(rootPath, defaultDb, &dbs)
+
+	// defer db.Close()
 
 	http.HandleFunc("/execute", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -39,6 +55,13 @@ func main() {
 		if err != nil {
 			http.Error(w, "Error decoding JSON: "+err.Error(), http.StatusBadRequest)
 			return
+		}
+		var db *sql.DB
+		fmt.Println("data.Database: " + data.Database)
+		if data.Database == "" {
+			db = connectToDb(rootPath, defaultDb, &dbs)
+		} else {
+			db = connectToDb(rootPath, data.Database, &dbs)
 		}
 		// Define a variable to hold the unmarshaled data
 		var parameters []interface{}
@@ -74,6 +97,12 @@ func main() {
 			http.Error(w, "Error decoding JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		var db *sql.DB
+		if data.Database == "" {
+			db = connectToDb(rootPath, defaultDb, &dbs)
+		} else {
+			db = connectToDb(rootPath, data.Database, &dbs)
+		}
 		// Define a variable to hold the unmarshaled data
 		var parameters []interface{}
 
@@ -81,6 +110,7 @@ func main() {
 		err = json.Unmarshal([]byte(data.Parameters), &parameters)
 		if err != nil {
 			http.Error(w, "invalid parameters provided: "+err.Error(), http.StatusBadRequest)
+			return
 		}
 
 		if data.Query == "" {
@@ -138,7 +168,7 @@ func main() {
 	}))
 	// For local development, just use http
 	log.Println("Starting server on :3333")
-	err = http.ListenAndServe(":3333", nil)
+	err := http.ListenAndServe(":3333", nil)
 	if err != nil {
 		log.Fatalf("ListenAndServe error: %v", err)
 	}

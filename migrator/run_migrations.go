@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -56,37 +57,51 @@ func run_migrations(directory string, migration_table string, db *sql.DB) {
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Name() < files[j].Name()
 	})
-
+	defaultDb := db
 	// Execute each file as an SQL statement
 	for _, file := range files {
 		if filepath.Ext(file.Name()) == ".sql" {
-			// Check if the migration has already been executed
-			var name string
-			err := db.QueryRow(fmt.Sprintf("SELECT name FROM %s WHERE name = ?", migration_table), file.Name()).Scan(&name)
-			if err == nil {
-				fmt.Printf("Migration %s has already been executed, skipping...\n", file.Name())
-				continue
-			}
-			filePath := filepath.Join(directory, file.Name())
-			sqlContent, err := migrations.ReadFile(filePath)
-			if err != nil {
-				log.Printf("Error reading file %s: %v", file.Name(), err)
-				continue
-			}
+			func() {
+				// Check if the migration has already been executed
+				var name string
+				err := defaultDb.QueryRow(fmt.Sprintf("SELECT name FROM %s WHERE name = ?", migration_table), file.Name()).Scan(&name)
+				if err == nil {
+					fmt.Printf("Migration %s has already been executed, skipping...\n", file.Name())
+					return
+				}
+				filePath := filepath.Join(directory, file.Name())
+				sqlContent, err := migrations.ReadFile(filePath)
+				if err != nil {
+					log.Printf("Error reading file %s: %v", file.Name(), err)
+					return
+				}
+				content := string(sqlContent)
+				var targetDb *sql.DB
+				if strings.Contains(content, "-- DATABASE") {
+					dbName := strings.Split(strings.Split(content, "\n")[0], "-- DATABASE ")[1]
+					targetDb, err = sql.Open("sqlite3", "./"+dbName+".db")
+					if err != nil {
+						log.Fatal(err)
+					}
+					defer targetDb.Close()
+				} else {
+					targetDb = defaultDb
+				}
+				_, err = targetDb.Exec(content)
+				if err != nil {
+					log.Printf("Error executing %s: %v", file.Name(), err)
+					return
+				}
 
-			_, err = db.Exec(string(sqlContent))
-			if err != nil {
-				log.Printf("Error executing %s: %v", file.Name(), err)
-				continue
-			}
+				fmt.Printf("Executed %s successfully\n", file.Name())
 
-			fmt.Printf("Executed %s successfully\n", file.Name())
+				// Persist that the migration has been executed
+				_, err = defaultDb.Exec(fmt.Sprintf("INSERT INTO %s (name) VALUES (?)", migration_table), file.Name())
+				if err != nil {
+					log.Printf("Error inserting migration %s into %s: %v", file.Name(), migration_table, err)
+				}
+			}()
 
-			// Persist that the migration has been executed
-			_, err = db.Exec(fmt.Sprintf("INSERT INTO %s (name) VALUES (?)", migration_table), file.Name())
-			if err != nil {
-				log.Printf("Error inserting migration %s into %s: %v", file.Name(), migration_table, err)
-			}
 		}
 	}
 
