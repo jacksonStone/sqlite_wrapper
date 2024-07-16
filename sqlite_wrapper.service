@@ -1,0 +1,11 @@
+[Unit]
+Description=SQLiteWrapper
+After=network.target
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/sqlite_wrapper
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
