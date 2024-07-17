@@ -6,6 +6,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu
 ExecStart=/home/ubuntu/sqlite_wrapper
+EnvironmentFile=/home/ubuntu/.ubuntu-env
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target
